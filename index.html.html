@@ -140,8 +140,9 @@ function closeM(){$('md').innerHTML=''}
 
 /* ---------- admin ---------- */
 var TABS=[['cash','Fluxo de caixa'],['stock','Estoque'],['sales','Vendas'],['products','Produtos e preços'],['prc','Precificação'],['categories','Categorias'],['discounts','Descontos'],['bills','Contas'],['clients','Clientes'],['cfg','Loja']];
-function loginView(){return'<header class="top"><h1>Área do administrador</h1><a class="btn g sm" href="#">Ver catálogo</a></header><div class="card" style="max-width:380px;padding:16px"><label>E-mail</label><input type="email" id="le" autocomplete="username"><label>Senha</label><input type="password" id="pw" autocomplete="current-password"><div id="pe" class="er">'+esc(LOGINERR)+'</div><button class="btn" onclick="doLogin()">Entrar</button></div>'}
-function doLogin(){var e=$('le').value.trim(),p=$('pw').value;LOGINERR='';$('pe').textContent='Entrando…';FB.signIn(FB.auth,e,p).catch(function(){$('pe').textContent='E-mail ou senha incorretos.'})}
+function loginView(){return'<header class="top"><h1>Área do administrador</h1><a class="btn g sm" href="#">Ver catálogo</a></header><div class="card" style="max-width:380px;padding:16px"><label>E-mail</label><input type="email" id="le" autocomplete="username"><label>Senha</label><input type="password" id="pw" autocomplete="current-password"><div id="pe" class="er">'+esc(LOGINERR)+'</div><button class="btn" onclick="doLogin()">Entrar</button><div class="mu" style="margin-top:10px">versão 3</div></div>'}
+function doLogin(){var e=$('le').value.trim(),p=$('pw').value;LOGINERR='';$('pe').textContent='Entrando…';
+ T(FB.signIn(FB.auth,e,p),20000,'login').catch(function(x){var c=(x&&x.code)||'';$('pe').textContent=(c==='auth/invalid-credential'||c==='auth/wrong-password'||c==='auth/user-not-found'||c==='auth/invalid-email')?'E-mail ou senha incorretos.':'Falha no login: '+(c||(x&&x.message))})}
 function logout(){location.hash='';FB.signOut(FB.auth)}
 function adminView(){
  var rows=cashRows(),bal=rows.length?rows[rows.length-1].bal:0,low=DB.products.filter(function(p){return stock(p)<=(+p.min||0)}),pend=DB.sales.filter(function(s){return s.status==='pendente'}).length;
@@ -261,12 +262,15 @@ async function pullPublic(){var a=await FB.getDocs(col('pub_products')),m=await 
  DB.products=a.docs.map(function(d){var x=d.data();x.initial=x.qty;return x}).sort(function(x,y){return(x.ord||0)-(y.ord||0)});
  DB.sales=[];DB.moves=[];DB.cash=[];DB.bills=[];DB.clients=[];DB.prc=[];
  if(meta){DB.cfg=[Object.assign({id:'cfg'},meta.cfg)];DB.categories=meta.categories.map(function(c){return{id:c.name,name:c.name,color:c.color}});DB.discounts=meta.discounts}else{DB.cfg=[];DB.categories=[];DB.discounts=[]}}
-async function pullAll(){var first=(await FB.getDocs(col('d_meta'))).empty;
+function T(p,ms,w){return Promise.race([p,new Promise(function(_,r){setTimeout(function(){r(new Error('tempo esgotado em: '+w))},ms)})])}
+function lm(x){var e=$('pe');if(e&&!ADM)e.textContent=x}
+async function pullAll(){lm('Conectado. Lendo dados…');var first=(await T(FB.getDocs(col('d_meta')),20000,'ler banco')).empty;
  if(first){DB=JSON.parse(JSON.stringify(SEEDDB))}
- else{await Promise.all(KEYS.map(async function(k){var s=await FB.getDocs(col('d_'+k));DB[k]=s.docs.map(function(d){return d.data()});s.docs.forEach(function(d){SYN[k+'|'+d.id]=JSON.stringify(d.data())})}))}
- (await FB.getDocs(col('pub_products'))).docs.forEach(function(d){PS[d.id]='x'});
- await importOrders();await sync();
- if(first)await FB.setDoc(FB.doc(FB.db,'d_meta','init'),{ok:1})}
+ else{await T(Promise.all(KEYS.map(async function(k){var s=await FB.getDocs(col('d_'+k));DB[k]=s.docs.map(function(d){return d.data()});s.docs.forEach(function(d){SYN[k+'|'+d.id]=JSON.stringify(d.data())})})),30000,'ler dados')}
+ (await T(FB.getDocs(col('pub_products')),20000,'ler catálogo')).docs.forEach(function(d){PS[d.id]='x'});
+ lm('Verificando pedidos…');await T(importOrders(),30000,'pedidos');
+ lm('Enviando dados ao banco…');var ok=await T(sync(),60000,'salvar dados');
+ if(first){if(!ok)throw new Error('não foi possível salvar os dados iniciais');await FB.setDoc(FB.doc(FB.db,'d_meta','init'),{ok:1})}}
 async function importOrders(){var s=await FB.getDocs(FB.query(col('orders'),FB.where('imported','==',false))),n=0;
  for(var i=0;i<s.docs.length;i++){var d=s.docs[i],o=d.data(),dt=o.created&&o.created.toDate?o.created.toDate():new Date(),ds=new Date(dt-dt.getTimezoneOffset()*6e4).toISOString().slice(0,16);
   var prev=DB.sales.some(function(x){return(x.client||'').toLowerCase()===(o.client||'').toLowerCase()&&x.status!=='cancelado'});
@@ -283,7 +287,7 @@ async function sync(){if(!ADM)return;var ops=[];
   Object.keys(PS).forEach(function(id){if(id!=='_meta'&&!seen[id])ops.push(FB.deleteDoc(FB.doc(FB.db,'pub_products',id)).then(function(){delete PS[id]}))});
   var c=CFG(),meta={cfg:{name:c.name||'',tag:c.tag||'',about:c.about||'',whats:c.whats||'',email:c.email||'',instagram:c.instagram||'',logo:c.logo||'',banner:c.banner||'',showBanner:!!c.showBanner},categories:DB.categories.map(function(x){return{name:x.name,color:x.color}}),discounts:DB.discounts.filter(function(d){return d.active}).map(function(d){return{id:d.id,name:d.name||'',code:d.code||'',dtype:d.dtype||'%',value:N(d.value),min:N(d.min),until:d.until||'',client:d.client||'',first:!!d.first,active:true}})},mj=JSON.stringify(meta);
   if(PS._meta!==mj)ops.push(FB.setDoc(FB.doc(FB.db,'pub_meta','store'),meta).then(function(){PS._meta=mj}));
-  await Promise.all(ops);setSy('Salvo ✓')}catch(e){setSy('Erro ao salvar');alert('Erro ao salvar: '+e.message)}}
+  await Promise.all(ops);setSy('Salvo ✓');return true}catch(e){setSy('Erro ao salvar');alert('Erro ao salvar: '+e.message);return false}}
 function fbInit(){FB.onAuth(FB.auth,async function(u){try{if(u&&u.email===ADMIN_EMAIL){await pullAll();ADM=true;LOGINERR=''}else{ADM=false;if(u)LOGINERR='O e-mail '+u.email+' não é o administrador da loja.';await pullPublic();if(u)FB.signOut(FB.auth)}}catch(e){LERR=e.message;if(u)LOGINERR='Erro ao carregar os dados: '+(e.code||'')+' '+e.message;if(window.console)console.error(e)}READY=true;render()})}
 window.addEventListener('fbready',fbInit);if(window.FB)fbInit();
 setTimeout(function(){if(!READY){LERR='timeout';READY=true;render()}},12000);
