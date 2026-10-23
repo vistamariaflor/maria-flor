@@ -1,10 +1,17 @@
-const C='mf-v3',F=['./','./index.html'];
-self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>Promise.all(F.map(u=>c.add(u).catch(()=>{})))));self.skipWaiting()});
-self.addEventListener('activate',e=>{e.waitUntil(self.clients.claim())});
+const C='mf-v4',F=['./','./index.html','./app.js'];
+self.addEventListener('install',e=>{
+ e.waitUntil(caches.open(C).then(c=>Promise.all(F.map(u=>c.add(new Request(u,{cache:'reload'})).catch(()=>{})))));
+ self.skipWaiting();
+});
+self.addEventListener('activate',e=>{
+ e.waitUntil(caches.open(C).then(c=>c.match('./index.html')).then(ok=>ok?caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)))):0).then(()=>self.clients.claim()));
+});
 self.addEventListener('fetch',e=>{
  if(e.request.method!=='GET')return;
- e.respondWith(caches.open(C).then(c=>c.match(e.request,{ignoreSearch:true}).then(cached=>{
-  const net=fetch(e.request).then(r=>{if(r&&r.ok)c.put(e.request,r.clone());return r}).catch(()=>cached||c.match('./index.html'));
-  return cached||net;
- })));
+ e.respondWith(
+  fetch(e.request,{cache:'reload'}).then(r=>{
+   if(r&&r.ok){const cp=r.clone();caches.open(C).then(c=>c.put(e.request,cp));return r}
+   return caches.match(e.request,{ignoreSearch:true}).then(c=>c||r);
+  }).catch(()=>caches.match(e.request,{ignoreSearch:true}).then(c=>c||caches.match('./index.html')))
+ );
 });
